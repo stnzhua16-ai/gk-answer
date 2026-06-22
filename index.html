@@ -84,7 +84,7 @@ function sm(m,t){_st.className="status show "+(t||"info");_st.style.display="fle
 function clx(t){return t.replace(/\s+/g,"").replace(/[，。．、；：！？《》（）【】""''…—]/g,"").toLowerCase()}
 function searchKB(q){var qc=clx(q),best=null,bs=0;KB.forEach(function(x){var tc=clx(x.t),s=0;if(qc===tc)s=100;else if(tc.indexOf(qc)>=0||qc.indexOf(tc)>=0)s=80+Math.min(qc.length,tc.length)/Math.max(qc.length,tc.length)*15;else{var c=0;for(var i=0;i<qc.length;i++)if(tc.indexOf(qc[i])>=0)c++;s=40+c/Math.max(qc.length,tc.length)*40}if(s>bs&&s>30){bs=s;best=x}});return best?{a:best.a,s:bs,d:best.d}:null}
 
-function api(e,m,b){var h={"Content-Type":"application/json"};return fetch("https://api.allorigins.win/raw?url="+encodeURIComponent("http://activity.njsummer.cn/aliredpack2nd"+e),{method:m||"GET",headers:h,body:b?JSON.stringify(b):null}).then(function(r){return r.json()}).catch(function(err){throw new Error("网络请求失败")})}
+function api(e,m,b){sm("📡 API: "+e.substring(0,30)+"...","info");var h={"Content-Type":"application/json"};var url="https://api.allorigins.win/raw?url="+encodeURIComponent("http://activity.njsummer.cn/aliredpack2nd"+e);console.log("API请求:",url);return fetch(url,{method:m||"GET",headers:h,body:b?JSON.stringify(b):null}).then(function(r){console.log("API响应:",r.status);if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}).then(function(d){console.log("API数据:",d.code||"no code");return d}).catch(function(err){var msg="网络请求失败: "+err.message;console.error(msg);throw new Error(msg)})}
 
 function go(){if(!KB){sm("题库加载中，请稍后再试","error");return}var v=_inp.value.trim();if(!v&&uid){doit();return}if(!v){sm("请粘贴答题链接或输入uuid","error");return}sm("正在解析...","info");var km=v.match(/key=([^&]+)/),um=v.match(/uuid=([^&]+)/);if(km&&um)uid=um[1];else{var uo=v.match(/[a-f0-9]{32}/i);if(uo)uid=uo[0];else{sm("未识别到uuid","error");return}}saveUid();doit()}
 
@@ -110,7 +110,7 @@ h+='<div class="rtitle">'+d.title+'</div><div class="rans"><span class="letter">
 if(d.desc&&d.desc!=="未匹配")h+='<div class="rd">📖 '+d.desc.substring(0,150)+"</div>";h+="</div>"});
 if(answers.length===qs.length)h+='<button class="btn-submit" onclick="sub()">📤 提交答案 · 查看成绩</button>';
 _res.innerHTML=h;_g.disabled=false;_g.textContent="🔄 重新答题"
-}).catch(function(err){sm("❌ "+err.message,"error");_g.disabled=false;_g.textContent="🚀 开始自动答题"})}
+}).catch(function(err){var msg=err.message||err.toString();sm("❌ 错误: "+msg,"error");console.error("完整错误:",err);_res.innerHTML='<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:12px;padding:16px;margin-top:12px;color:#DC2626;font-size:13px;word-break:break-all;">⚠️ <b>错误详情：</b><br>'+msg+'<br><br>请检查网络连接后重试</div>';_g.disabled=false;_g.textContent="🚀 开始自动答题"})}
 
 function sub(){if(!ans||!ans.length){sm("无答案","error");return}_g.disabled=true;sm("📤 提交中...","info");
 api("/exam/submit","POST",{time:30,dtoList:ans,aid:KEY,uuid:uid}).then(function(d){
