@@ -1,0 +1,262 @@
+"""
+国库知识答题助手 - 云部署版
+单文件 Flask 应用，可部署到 Render/Vercel/Railway 等免费平台
+"""
+import json, re, os
+import requests as req
+from flask import Flask, request, jsonify, render_template_string
+
+app = Flask(__name__)
+
+API_BASE = "http://activity.njsummer.cn/aliredpack2nd"
+DEFAULT_KEY = "eeeddc4f487b4bf7b0c9f1dad5d1ff99"
+
+# ===== 内嵌知识库 =====
+KB_DATA = [
+    {"t":"国库机构按照什么体制设立？","a":"2","d":"《国家金库条例》规定，国库机构按照国家财政管理体制设立。"},
+    {"t":"原则上一级财政应设立几级国库？","a":"0","d":"《国家金库条例》规定，原则上一级财政设立一级国库。"},
+    {"t":"中国人民银行具体（）国库。组织管理国库工作是人民银行的一项重要职责。","a":"0","d":"《国家金库条例》规定，中国人民银行具体经理国库"},
+    {"t":"凡代理国库业务和办理国库经收业务的商业银行、信用社均应设立哪个一级会计科目？","a":"2","d":"应统一设立待结算财政款项一级科目。"},
+    {"t":"《中华人民共和国国家金库条例》的颁布时间为（）。","a":"0","d":"《国家金库条例》于1985年7月27日颁布实施。"},
+    {"t":"国库经收处是否可以办理预算收入退付？","a":"2","d":"国库经收处不得办理预算收入退付。"},
+    {"t":"代理支库的国库主任由谁兼任？","a":"2","d":"代理支库的国库主任由代理行行长兼任。"},
+    {"t":"商业银行、信用社有（）行为，情节严重的，不属于依照《中华人民共和国中国人民银行法》第四十六条的规定给予处罚的？","a":"3","d":"商业银行、信用社占压、挪用所收纳预算收入款项的。"},
+    {"t":"代理支库的商业银行以及办理国库经收业务的商业银行和信用社，不得违规为征收机关开立什么账户？","a":"2","d":"严禁违规为征收机关开立预算收入过渡账户。"},
+    {"t":"国库经收处将经收税款转入待结算财政款项以外其他科目或账户的，视同什么行为处理？","a":"1","d":"视同挪用预算收入处理。"},
+    {"t":"组织管理国库工作是（）的一项重要职责。","a":"2","d":"组织管理国库工作是人民银行的一项重要职责。"},
+    {"t":"商业银行、信用社申请代理支库业务的，申请人原则上为（）。","a":"1","d":"申请人原则上为拟具体承办代理支库业务的商业银行、信用社或其分支机构。"},
+    {"t":"关于国库机构，以下哪项是错误的？","a":"2","d":"省辖市、自治州设立中心支库。"},
+    {"t":"商业银行未经中国人民银行及其分支机构资格认定，擅自从事或变相从事国库集中收付业务的，中国人民银行及其分支机构应当责令改正，并依据（）进行处罚？","a":"0","d":"依据《中国人民银行法》第四十六条处罚。"},
+    {"t":"国库集中收付代理银行应当履行的职责不包括以下哪项？","a":"3","d":"不包括按季度报送分析报告的要求。"},
+    {"t":"《商业银行、信用社代理支库业务审批管理办法》规定，经准予代理支库业务的商业银行、信用社凭准予行政许可决定书，与初审行签订（）。","a":"1","d":"签订代理支库业务协议书。"},
+    {"t":"同一税务机关在国库可以开设几个待缴库税款专户？","a":"2","d":"同一税务机关在国库只能设置一个待缴库税款专户。"},
+    {"t":"国库的主要权限不包括以下哪项？","a":"3","d":"国库有权拒绝执行，并及时向上级报告。"},
+    {"t":"根据《关于跨境税费缴库退库业务管理有关事项的通知》，跨境税费缴库业务中，经收跨境外币税费的国库经收处必须具备什么资格？","a":"1","d":"必须具备结售汇业务资格。"},
+    {"t":"储蓄国债（电子式）的付息方式是（）。","a":"0","d":"储蓄国债（电子式）按年付息。"},
+    {"t":"新中国最早发行的国债是（）。","a":"0","d":"新中国最早发行的国债是1949年12月发行的人民胜利折实公债。"},
+    {"t":"关于储蓄国债（凭证式）收款凭证的管理，下列说法正确的是（ ）。","a":"1","d":"储蓄国债（凭证式）收款凭证的管理。"},
+    {"t":"各级国库库款的支拨，必须在同级财政存款余额内支付，（ ）。","a":"2","d":"各级国库库款的支拨，必须在同级财政存款余额内支付。"},
+    {"t":"国库业务工作实行垂直领导。各省、自治区、直辖市分库及其所属各级支库，既是中央国库的分支机构，也是地方国库。","a":"0","d":"国库业务工作实行垂直领导。"},
+    {"t":"机构投资者可以购买储蓄国债（电子式）。（ ）","a":"1","d":"机构投资者不可以购买储蓄国债（电子式）。"},
+    {"t":"国库经收处收纳的预算收入属代收性质，不是正式入库。（ ）","a":"0","d":"国库经收处收纳的预算收入属代收性质，不是正式入库。"},
+    {"t":"国家的一切预算收入，应按照规定全部缴入国库，地方政府机构也可代为保管。（ ）","a":"1","d":"任何单位不得截留、坐支或自行保管。"},
+    {"t":"国库收纳库款以人民币为主，外币为辅。（ ）","a":"1","d":"国库收纳库款以人民币为限。"},
+    {"t":"国家实行国库集中收缴和集中支付制度，对政府全部收入和支出实行国库集中收付管理。（ ）","a":"0","d":"国家实行国库集中收缴和集中支付制度。"},
+    {"t":"商业银行、信用社占压、挪用所收纳预算收入款项的，情节严重的，依据《金融违法行为处罚办法》第二十二条的规定给予处罚。（ ）","a":"1","d":"依据《金融违法行为处罚办法》第二十二条处罚，无情节严重要求。"},
+    {"t":"政府的全部收入应当上缴财政专户，任何部门、单位和个人不得截留、占用、挪用或者拖欠。（ ）","a":"1","d":"政府的全部收入应当上缴国家金库。"},
+    {"t":"国库集中收付代理银行资格认定有效期为5年，代理银行在期满后拟延续资格认定有效性的，应当在期满前规定时间内提出申请。（ ）","a":"0","d":"国库集中收付代理银行资格认定有效期为5年。"},
+    {"t":"参与中央和地方国库现金管理的商业银行取得定期存款，可以使用已部分还本的债券作为质押品。（ ）","a":"1","d":"已部分还本的债券不得作为质押品。"},
+    {"t":"各级国库应当设立专门的工作机构办理国库业务。（ ）","a":"0","d":"各级国库应当设立专门的工作机构办理国库业务。"},
+    {"t":"与其他金融投资产品相比，储蓄国债的主要优点包括（ ）。","a":"0,1,2,3","d":"储蓄国债具有信用等级高、安全性好、变现灵活、收益相对较高、购买方便等优点。"},
+    {"t":"凡代理国库业务和办理国库经收业务的商业银行、信用社，以下做法正确的有？","a":"0,1,3","d":"凡代理国库业务和办理国库经收业务的商业银行、信用社的正确做法。"},
+    {"t":"关于国库经收处收纳预算收入的报解时限，下列说法正确的有？","a":"0,1,2","d":"关于国库经收处收纳预算收入的报解时限的正确说法。"},
+    {"t":"下列关于国库集中收付代理银行的说法，正确的有？","a":"0,1,2","d":"国库集中收付代理银行的正确说法。"},
+    {"t":"储蓄国债（电子式）的特点包括（ ）。","a":"0,1,2,3","d":"储蓄国债（电子式）的特点。"},
+    {"t":"国库的基本职责包括以下哪些？","a":"0,1,2,3","d":"国库的基本职责。"},
+    {"t":"下列属于国库权限的有？","a":"0,1,2","d":"国库权限。"},
+    {"t":"关于国库经收处，下列说法正确的有？","a":"0,1,2","d":"国库经收处的正确说法。"},
+    {"t":"商业银行代理国库业务的条件包括（ ）。","a":"0,1,2,3","d":"商业银行代理国库业务的条件。"},
+    {"t":"国库现金管理操作方式包括（ ）。","a":"0,1,2","d":"国库现金管理操作方式。"},
+    {"t":"储蓄国债与记账式国债的区别包括（ ）。","a":"0,1,2,3","d":"储蓄国债与记账式国债的区别。"},
+    {"t":"关于国家金库条例，下列说法正确的有？","a":"0,1,2","d":"关于国家金库条例的正确说法。"},
+    {"t":"下列关于国库会计核算的说法，正确的有？","a":"0,1,3","d":"国库会计核算的正确说法。"},
+    {"t":"国库经收处收纳的预算收入，应如何处理？","a":"0,1,2","d":"国库经收处收纳的预算收入处理方式。"},
+    {"t":"关于预算收入退库，下列说法正确的有？","a":"0,1,2","d":"预算收入退库的正确说法。"},
+    {"t":"代理国库业务的商业银行应当遵守的规定包括（ ）。","a":"0,1,2,3","d":"代理国库业务的商业银行应遵守的规定。"},
+    {"t":"下列关于储蓄国债的说法，正确的有？","a":"0,1,2","d":"储蓄国债的正确说法。"},
+    {"t":"国库在办理预算收入收纳时，应当审核的内容包括（ ）。","a":"0,1,2","d":"国库在办理预算收入收纳时应当审核的内容。"},
+    {"t":"关于国库集中支付，下列说法正确的有？","a":"0,1,3","d":"国库集中支付的正确说法。"},
+    {"t":"下列属于国库事后监督内容的有？","a":"0,1,2","d":"国库事后监督内容。"},
+    {"t":"关于跨境税费缴库业务，下列说法正确的有？","a":"0,1,2","d":"跨境税费缴库业务的正确说法。"},
+    {"t":"国库信息化建设的目标包括（ ）。","a":"0,1,2,3","d":"国库信息化建设的目标。"},
+    {"t":"关于国债发行，下列说法正确的有？","a":"0,1,2","d":"国债发行的正确说法。"},
+    {"t":"国库风险防范的措施包括（ ）。","a":"0,1,2,3","d":"国库风险防范的措施。"},
+]
+
+def cl(t):
+    return re.sub(r'\s+','',re.sub(r'[，。．、；：！？《》（）【】""''…—]','',t)).lower()
+
+def search_kb(query):
+    qc = cl(query)
+    best, bs = None, 0
+    for x in KB_DATA:
+        tc = cl(x['t'])
+        s = 0
+        if qc == tc: s = 100
+        elif tc.find(qc) >= 0 or qc.find(tc) >= 0:
+            s = 80 + min(len(qc),len(tc))/max(len(qc),len(tc))*15
+        else:
+            c = sum(1 for ch in qc if tc.find(ch) >= 0)
+            s = 40 + c/max(len(qc),len(tc))*40
+        if s > bs and s > 30:
+            bs, best = s, x
+    return best
+
+
+PAGE = """<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>平海干饭🐎 · 国库答题</title>
+<style>
+:root{--p:#4F6EF7;--s:#22C55E;--bg:#F0F4FF;--card:#fff;--t:#1E293B;--t2:#64748B;--b:#E2E8F0}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);min-height:100vh;padding:24px 16px 40px;color:var(--t)}
+.container{max-width:480px;margin:0 auto}
+.logo-area{text-align:center;padding:24px 0 20px}
+.logo-icon{width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#4F6EF7,#7C5CFC);display:inline-flex;align-items:center;justify-content:center;font-size:32px;color:#fff;margin-bottom:12px;box-shadow:0 8px 24px rgba(79,110,247,.3)}
+.logo-title{font-size:22px;font-weight:800;background:linear-gradient(135deg,#4F6EF7,#7C5CFC);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.logo-sub{font-size:13px;color:var(--t2);margin-top:2px}
+.tag-row{display:flex;gap:8px;justify-content:center;margin:0 0 20px;flex-wrap:wrap}
+.tag{font-size:11px;padding:4px 12px;border-radius:20px;background:#EEF1FE;color:var(--p);font-weight:600}
+.tag.green{background:#ECFDF5;color:#059669}
+.tag.amber{background:#FFFBEB;color:#D97706}
+.main-card{background:var(--card);border-radius:20px;padding:28px 24px;box-shadow:0 10px 25px rgba(79,110,247,.12);margin-bottom:20px}
+.saved-bar{display:none;background:#ECFDF5;border:1px solid #BBF7D0;border-radius:12px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#059669;text-align:center;font-weight:600}
+.input-group{margin-bottom:16px}
+.input-group textarea{width:100%;min-height:56px;border:2px solid var(--b);border-radius:14px;padding:14px 16px;font-size:15px;color:var(--t);background:#F8FAFC;resize:vertical;outline:none;font-family:inherit;line-height:1.5;transition:all .25s}
+.input-group textarea:focus{border-color:var(--p);background:#fff;box-shadow:0 0 0 4px rgba(79,110,247,.1)}
+.input-group textarea::placeholder{color:#94A3B8}
+.btn{width:100%;padding:14px;border:none;border-radius:14px;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px}
+.btn:active{transform:scale(.98)}
+.btn-p{background:linear-gradient(135deg,#4F6EF7,#6366F1);color:#fff;box-shadow:0 4px 14px rgba(79,110,247,.35)}
+.btn-p:disabled{background:#CBD5E1;color:#94A3B8;box-shadow:none;cursor:not-allowed}
+.btn-s{background:#F1F5F9;color:var(--t2);font-size:14px;font-weight:600}
+.status{display:none;padding:12px 16px;border-radius:12px;font-size:14px;font-weight:600;margin-top:16px;align-items:center;gap:10px}
+.status.show{display:flex}
+.status.info{background:#EEF2FF;color:#4F6EF7}
+.status.success{background:#ECFDF5;color:#059669}
+.status.error{background:#FEF2F2;color:#DC2626}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.info .dot{background:#4F6EF7;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+.result-item{background:#F8FAFC;border-radius:14px;padding:16px;margin-bottom:10px;border:1px solid var(--b)}
+.result-item.ok{border-color:#BBF7D0;background:#F0FDF4}
+.result-item .rh{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.result-item .num{background:var(--p);color:#fff;width:24px;height:24px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+.result-item.ok .num{background:var(--s)}
+.result-item .rt{font-size:11px;padding:2px 8px;border-radius:6px;font-weight:600}
+.rt1{background:#DBEAFE;color:#1D4ED8}.rt2{background:#FFEDD5;color:#C2410C}.rt3{background:#F3E8FF;color:#7C3AED}
+.result-item .rs{font-size:11px;color:var(--t2);margin-left:auto}
+.result-item .rtitle{font-size:14px;color:var(--t);line-height:1.6;margin-bottom:6px;font-weight:500}
+.result-item .rans{display:inline-flex;align-items:center;gap:6px;font-weight:700;color:var(--s);font-size:15px}
+.result-item .letter{width:30px;height:30px;border-radius:10px;background:#DCFCE7;color:#15803D;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800}
+.result-item .rd{margin-top:8px;padding-top:8px;border-top:1px dashed var(--b);font-size:12px;color:var(--t2);line-height:1.7}
+.btn-submit{width:100%;padding:16px;border:none;border-radius:14px;font-size:17px;font-weight:700;background:linear-gradient(135deg,#22C55E,#16A34A);color:#fff;cursor:pointer;margin-top:8px;box-shadow:0 4px 14px rgba(34,197,94,.35);font-family:inherit}
+.footer{text-align:center;padding:16px;font-size:12px;color:#94A3B8}
+.footer .brand{font-weight:700;background:linear-gradient(135deg,#4F6EF7,#7C5CFC);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.guide{padding:14px;background:#F8FAFC;border-radius:12px;font-size:12px;color:var(--t2);line-height:1.8;margin-top:16px}
+.guide b{color:var(--p)}
+</style></head><body>
+<div class="container">
+<div class="logo-area"><div class="logo-icon">🐎</div>
+<div class="logo-title">平海干饭🐎</div>
+<div class="logo-sub">国库知识 · 智能答题助手</div></div>
+<div class="tag-row"><span class="tag">📚 60题题库</span><span class="tag green">🎯 精准匹配</span><span class="tag amber">⚡ 一键提交</span></div>
+<div class="main-card">
+<div class="saved-bar" id="savedBar">✅ 已记住你的账号，直接点开始即可</div>
+<div class="input-group"><textarea id="inp" placeholder="粘贴答题链接 或 输入uuid ..." autocomplete="off"></textarea></div>
+<button class="btn btn-p" id="go" onclick="go()">🚀 开始自动答题</button>
+<button class="btn btn-s" onclick="clearSaved()" id="clearBtn" style="display:none">🔓 切换账号</button>
+<div class="status" id="st"><span class="dot"></span><span id="stt"></span></div>
+<div id="res"></div>
+<div class="guide">📌 <b>操作提示：</b><br>① 微信答题页 → 转发到<b>文件传输助手</b><br>② 电脑微信打开 → 复制链接中的 <b style="color:var(--p)">uuid</b><br>③ 首次粘贴后自动记住，<b style="color:var(--s)">以后直接点开始就行！</b></div>
+</div>
+<div class="footer">Powered by <span class="brand">图图J</span> · 仅供学习参考</div>
+</div>
+<script>
+function $(id){return document.getElementById(id)}
+function ss(m,t){var e=$('st');e.className='status show '+(t||'info');e.style.display='flex';$('stt').textContent=m}
+var uid='',ans=null;
+function go(){
+var v=$('inp').value.trim();
+if(!v&&uid){doit();return}
+if(!v){ss('请粘贴答题链接或输入uuid','error');return}
+ss('🔍 正在解析...','info');
+var km=v.match(/key=([^&]+)/),um=v.match(/uuid=([^&]+)/);
+if(km&&um){uid=um[1]}else{var uo=v.match(/[a-f0-9]{32}/i);if(uo){uid=uo[0]}else{ss('未识别到uuid','error');return}}
+saveUid();doit()
+}
+function saveUid(){try{localStorage.setItem('gk_uid',uid);$('savedBar').style.display='block';$('clearBtn').style.display='block';$('inp').style.display='none'}catch(e){}}
+function clearSaved(){try{localStorage.removeItem('gk_uid')}catch(e){}uid='';$('inp').value='';$('inp').style.display='block';$('savedBar').style.display='none';$('clearBtn').style.display='none';ss('已清除','info')}
+(function(){try{var s=localStorage.getItem('gk_uid');if(s){uid=s;$('inp').style.display='none';$('savedBar').style.display='block';$('clearBtn').style.display='block'}}catch(e){}var m=location.search.match(/uuid=([a-f0-9]{32})/i);if(m){uid=m[1];saveUid()}})();
+function api(e,m,b){return fetch('/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({e:e,m:m||'GET',b:b||null})}).then(function(r){return r.json()})}
+function doit(){
+$('res').innerHTML='';$('go').disabled=true;$('go').textContent='⏳ 自动答题中...';ss('① 检查账号...','info');
+api('/checkInfo?uuid='+uid+'&key=__KEY__').then(function(d){
+if(d.code==='2300'){ss('② 已注册，获取题目...','info');return{code:'200'}}
+else if(d.code==='2200'){ss('② 正在注册...','info');return api('/updateInfo','POST',{key:'__KEY__',uuid:uid,province:'北京市',city:'东城区',nickName:'平海干饭🐎',company:'',phone:''})}
+else if(d.code==='1000')throw new Error('今日次数已用完')
+else throw new Error(d.message||'状态异常')
+}).then(function(r){if(r.code&&r.code!=='200')throw new Error(r.message||'注册失败');ss('③ 获取题目...','info');return api('/exam/getExam','POST',{key:'__KEY__',uuid:uid})
+}).then(function(e){if(e.code!=='200')throw new Error(e.message||'获取题目失败');ss('④ 匹配答案...','info');
+return fetch('/match',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data:e.data||[]})}).then(function(r){return r.json()})
+}).then(function(m){if(m.error)throw new Error(m.error);
+ans=m.answers;ss('✅ 匹配 '+ans.length+'/'+m.details.length+' 题','success');
+var h='';m.details.forEach(function(d){var sc=d.score>=80?'#059669':d.score>0?'#D97706':'#DC2626';
+h+='<div class="result-item'+(d.ok?' ok':'')+'"><div class="rh"><span class="num">'+d.idx+'</span><span class="rt rt'+d.tc+'">'+d.type+'</span><span class="rs" style="color:'+sc+'">匹配 '+d.score+'%</span></div>';
+h+='<div class="rtitle">'+d.title+'</div><div class="rans"><span class="letter">'+d.ans+'</span> 正确答案</div>';
+if(d.desc&&d.desc!=='未匹配')h+='<div class="rd">📖 '+d.desc.substring(0,150)+'</div>';h+='</div>'});
+if(m.all_matched)h+='<button class="btn-submit" onclick="sub()">📤 提交答案 · 查看成绩</button>';
+$('res').innerHTML=h;$('go').disabled=false;$('go').textContent='🔄 重新答题'
+}).catch(function(err){ss('❌ '+err.message,'error');$('go').disabled=false;$('go').textContent='🚀 开始自动答题'})
+}
+function sub(){if(!ans||!ans.length){ss('无答案','error');return}
+$('go').disabled=true;ss('📤 提交中...','info');
+api('/exam/submit','POST',{time:30,dtoList:ans,aid:'__KEY__',uuid:uid}).then(function(d){
+if(d.code==='200'||d.code==='800'){var sc=(d.data&&d.data.score!=null)?d.data.score:(typeof d.data==='number'?d.data:(d.data||'100'));ss('🎉 得分: '+sc+' 分！','success');
+setTimeout(function(){window.location.href='http://file.njsummer.cn/gkzsactivity/success.html?key=__KEY__&score='+sc+(d.code==='800'?'&result=800':'')},1000)}
+else if(d.code==='1000'){ss('今日次数已用完','error')}else{ss('失败: ['+d.code+'] '+(d.message||''),'error')}
+$('go').disabled=false;$('go').textContent='🚀 开始自动答题'}).catch(function(e){ss('失败: '+e.message,'error');$('go').disabled=false;$('go').textContent='🚀 开始自动答题'})
+}
+</script></body></html>"""
+
+
+@app.route("/")
+def index():
+    return PAGE.replace("__KEY__", DEFAULT_KEY)
+
+
+@app.route("/api", methods=["POST"])
+def api_proxy():
+    d = request.get_json()
+    endpoint = d.get("e", "")
+    method = d.get("m", "GET").upper()
+    body = d.get("b")
+    url = f"{API_BASE}{endpoint}"
+    headers = {"Content-Type": "application/json", "Accept": "application/json",
+               "User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36"}
+    if "/exam/submit" in endpoint and body:
+        body.pop("token", None)
+    try:
+        if method == "GET":
+            resp = req.get(url, params=body or {}, headers=headers, timeout=15)
+        else:
+            resp = req.post(url, json=body, headers=headers, timeout=15)
+        return jsonify(resp.json())
+    except Exception as e:
+        return jsonify({"code": "error", "message": str(e)})
+
+
+@app.route("/match", methods=["POST"])
+def match():
+    d = request.get_json()
+    questions = d.get("data", [])
+    if isinstance(questions, dict):
+        questions = [v for v in questions.values() if isinstance(v, dict) and "idStr" in v]
+    answers, details = [], []
+    tn = {1: "单选", 2: "多选", 3: "判断"}
+    for i, q in enumerate(questions):
+        m = search_kb(q.get("title", ""))
+        detail = {"idx": i+1, "type": tn.get(q.get("type",1), "?"), "title": q.get("title","")[:80], "tc": q.get("type",1)}
+        if m:
+            detail.update({"ok": True, "score": round(m["s"]), "ans": m["a"], "desc": m["d"]})
+            answers.append({"idStr": q.get("idStr",""), "answer": m["a"]})
+        else:
+            detail.update({"ok": False, "score": 0, "ans": "?", "desc": "未匹配"})
+        details.append(detail)
+    return jsonify({"details": details, "answers": answers, "all_matched": len(answers) == len(questions)})
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
